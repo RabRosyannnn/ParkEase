@@ -1,6 +1,6 @@
 # =========================
-# ParkEase (POSTGRESQL + EDIT ACTIVE RESERVATIONS + ANALYTICS)
-# - Fix: convert ? params to $1,$2,... for RPostgres
+# ParkEase (SQLITE + EDIT ACTIVE RESERVATIONS + ANALYTICS)
+# - SQLite (RSQLite) backend
 # - Auto-create tables + indexes
 # - Fresh DB connection per query
 # - Edit Active reservations + End w/ ticket + Analytics
@@ -10,7 +10,7 @@ library(shiny)
 library(shinyWidgets)
 library(DT)
 library(DBI)
-library(RPostgres)
+library(RSQLite)
 library(digest)
 library(ggplot2)
 
@@ -21,32 +21,18 @@ Sys.setenv(TZ = APP_TZ)  # makes Sys.time() follow PH time
 ADMIN_USER <- "admin"
 ADMIN_PASS_HASH <- digest("parkease123", algo = "sha256")
 
-# ================== DB HELPERS ==================
+# ================== SQLITE DB HELPERS ==================
+SQLITE_FILE <- Sys.getenv("SQLITE_FILE", "parkease.sqlite")
+
 get_con <- function() {
-  con <- dbConnect(
-    RPostgres::Postgres(),
-    host     = Sys.getenv("DB_HOST", "127.0.0.1"),
-    port     = as.integer(Sys.getenv("DB_PORT", "5432")),
-    dbname   = Sys.getenv("DB_NAME", "parkease_db"),
-    user     = Sys.getenv("DB_USER", "postgres"),
-    password = Sys.getenv("DB_PASS", ""),
-    sslmode  = Sys.getenv("DB_SSLMODE", "prefer")
-  )
+  db_path <- file.path(getwd(), SQLITE_FILE)
+  con <- dbConnect(RSQLite::SQLite(), dbname = db_path)
   
-  # ✅ Critical: make DB "today" = PH today
-  try(dbExecute(con, paste0("SET TIME ZONE '", APP_TZ, "';")), silent = TRUE)
+  # Safer behavior for concurrency + speed
+  try(dbExecute(con, "PRAGMA journal_mode = WAL;"), silent = TRUE)
+  try(dbExecute(con, "PRAGMA foreign_keys = ON;"), silent = TRUE)
   
   con
-}
-
-# Convert SQL with ? placeholders -> $1,$2,... (required for Postgres prepared statements)
-qmark_to_dollar <- function(sql, n_params) {
-  if (is.null(n_params) || n_params <= 0) return(sql)
-  out <- sql
-  for (i in seq_len(n_params)) {
-    out <- sub("\\?", paste0("$", i), out)
-  }
-  out
 }
 
 db_get <- function(sql, params = NULL) {
@@ -57,8 +43,7 @@ db_get <- function(sql, params = NULL) {
   if (is.null(params)) {
     return(dbGetQuery(con, sql))
   } else {
-    sql2 <- qmark_to_dollar(sql, length(params))
-    return(dbGetQuery(con, sql2, params = params))
+    return(dbGetQuery(con, sql, params = params))
   }
 }
 
@@ -70,37 +55,40 @@ db_exec <- function(sql, params = NULL) {
   if (is.null(params)) {
     return(dbExecute(con, sql))
   } else {
-    sql2 <- qmark_to_dollar(sql, length(params))
-    return(dbExecute(con, sql2, params = params))
+    return(dbExecute(con, sql, params = params))
   }
 }
 
 ensure_tables <- function() {
+  
+  # parking_slots: is_available stored as INTEGER 1/0 (SQLite style)
   db_exec(paste(
     "CREATE TABLE IF NOT EXISTS parking_slots (",
-    "  slot_id SERIAL PRIMARY KEY,",
-    "  slot_no VARCHAR(50) UNIQUE NOT NULL,",
-    "  zone    VARCHAR(50) NOT NULL,",
-    "  type    VARCHAR(50) NOT NULL,",
-    "  rate    NUMERIC(10,2) NOT NULL DEFAULT 0,",
-    "  is_available BOOLEAN NOT NULL DEFAULT TRUE,",
-    "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    "  slot_id INTEGER PRIMARY KEY AUTOINCREMENT,",
+    "  slot_no TEXT NOT NULL UNIQUE,",
+    "  zone    TEXT NOT NULL,",
+    "  type    TEXT NOT NULL,",
+    "  rate    REAL NOT NULL DEFAULT 0,",
+    "  is_available INTEGER NOT NULL DEFAULT 1,",
+    "  created_at TEXT DEFAULT (datetime('now'))",
     ");",
     sep = "\n"
   ))
   
+  # reservations: start_time/time_out stored as TEXT timestamps (from R, PH time)
   db_exec(paste(
     "CREATE TABLE IF NOT EXISTS reservations (",
-    "  reservation_id SERIAL PRIMARY KEY,",
-    "  slot_id INT NOT NULL REFERENCES parking_slots(slot_id),",
-    "  vehicle_no VARCHAR(50) NOT NULL,",
-    "  driver_name VARCHAR(100) NOT NULL,",
-    "  start_time TIMESTAMP NOT NULL,",
-    "  time_out TIMESTAMP NULL,",
-    "  duration_hours INT NULL,",
-    "  total_fee NUMERIC(10,2) NULL,",
-    "  status VARCHAR(20) NOT NULL DEFAULT 'Active',",
-    "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    "  reservation_id INTEGER PRIMARY KEY AUTOINCREMENT,",
+    "  slot_id INTEGER NOT NULL,",
+    "  vehicle_no TEXT NOT NULL,",
+    "  driver_name TEXT NOT NULL,",
+    "  start_time TEXT NOT NULL,",
+    "  time_out TEXT NULL,",
+    "  duration_hours INTEGER NULL,",
+    "  total_fee REAL NULL,",
+    "  status TEXT NOT NULL DEFAULT 'Active',",
+    "  created_at TEXT DEFAULT (datetime('now')),",
+    "  FOREIGN KEY(slot_id) REFERENCES parking_slots(slot_id)",
     ");",
     sep = "\n"
   ))
@@ -111,9 +99,15 @@ ensure_tables <- function() {
   db_exec("CREATE INDEX IF NOT EXISTS idx_reservations_timeout ON reservations(time_out);")
 }
 
+# --------- TIME HELPERS ----------
 to_posix <- function(x) {
   if (inherits(x, "POSIXct")) return(x)
   suppressWarnings(as.POSIXct(x, tz = Sys.timezone()))
+}
+
+fmt_ts <- function(x) {
+  # store as "YYYY-mm-dd HH:MM:SS" string
+  format(x, "%Y-%m-%d %H:%M:%S")
 }
 
 rate_for_type <- function(type) {
@@ -281,6 +275,7 @@ server <- function(input, output, session){
     if (digest(input$login_pass,"sha256")==ADMIN_PASS_HASH && input$login_user==ADMIN_USER) {
       logged_in(TRUE)
       output$login_error <- renderText("")
+      refresh(refresh() + 1)
     } else {
       output$login_error <- renderText("Invalid username or password")
     }
@@ -326,22 +321,24 @@ server <- function(input, output, session){
   output$available_slots <- renderText({
     s <- slots()
     if (nrow(s) == 0 || is.null(s$is_available)) return(0)
-    sum(as.logical(s$is_available), na.rm=TRUE)
+    sum(as.logical(as.integer(s$is_available)), na.rm=TRUE)
   })
   output$occupied_slots <- renderText({
     s <- slots()
     if (nrow(s) == 0 || is.null(s$is_available)) return(0)
-    sum(!as.logical(s$is_available), na.rm=TRUE)
+    sum(!as.logical(as.integer(s$is_available)), na.rm=TRUE)
   })
   
   output$revenue_today <- renderText({
     refresh()
     
+    # Since time_out is stored as TEXT "YYYY-mm-dd HH:MM:SS",
+    # we can use date(time_out) comparison safely.
     sql <- paste(
       "SELECT COALESCE(SUM(total_fee),0) AS total",
       "FROM reservations",
       "WHERE time_out IS NOT NULL",
-      "  AND time_out::date = CURRENT_DATE",
+      "  AND date(time_out) = date('now','localtime')",
       sep = "\n"
     )
     
@@ -350,7 +347,6 @@ server <- function(input, output, session){
     
     paste0("₱", formatC(as.numeric(total), digits = 2, format = "f"))
   })
-  
   
   # ---------- ANALYTICS ----------
   output$daily_revenue <- renderPlot({
@@ -415,12 +411,12 @@ server <- function(input, output, session){
   # ---------- RESERVE CASCADE ----------
   observe({
     req(logged_in(), input$res_zone, input$res_type)
-    refresh()  # ✅ forces this observe to re-run when DB changes
+    refresh()
     
     sql <- paste(
       "SELECT slot_id, slot_no",
       "FROM parking_slots",
-      "WHERE is_available=TRUE AND zone=? AND type=?",
+      "WHERE is_available=1 AND zone=? AND type=?",
       "ORDER BY slot_no",
       sep="\n"
     )
@@ -439,14 +435,14 @@ server <- function(input, output, session){
     }
   })
   
-  # ---------- ADD SLOT (FIXED FOR POSTGRES PARAMS) ----------
+  # ---------- ADD SLOT ----------
   observeEvent(input$add_slot,{
     req(logged_in(), input$slot_no, input$zone, input$type)
     rate <- rate_for_type(input$type)
     
     tryCatch({
       db_exec(
-        "INSERT INTO parking_slots(slot_no,zone,type,rate,is_available) VALUES (?,?,?,?,TRUE)",
+        "INSERT INTO parking_slots(slot_no,zone,type,rate,is_available) VALUES (?,?,?,?,1)",
         params=list(input$slot_no, input$zone, input$type, rate)
       )
       refresh(refresh()+1)
@@ -462,11 +458,14 @@ server <- function(input, output, session){
     if (input$slot_sel == "") return()
     
     tryCatch({
+      start_time <- Sys.time()
+      
       db_exec(
-        "INSERT INTO reservations(slot_id,vehicle_no,driver_name,start_time,status) VALUES (?,?,?,NOW(),'Active')",
-        params=list(as.integer(input$slot_sel), input$vehicle, input$driver)
+        "INSERT INTO reservations(slot_id,vehicle_no,driver_name,start_time,status) VALUES (?,?,?,?, 'Active')",
+        params=list(as.integer(input$slot_sel), input$vehicle, input$driver, fmt_ts(start_time))
       )
-      db_exec("UPDATE parking_slots SET is_available=FALSE WHERE slot_id=?",
+      
+      db_exec("UPDATE parking_slots SET is_available=0 WHERE slot_id=?",
               params=list(as.integer(input$slot_sel)))
       
       refresh(refresh()+1)
@@ -485,7 +484,7 @@ server <- function(input, output, session){
     sql <- paste(
       "SELECT slot_id, slot_no",
       "FROM parking_slots",
-      "WHERE ((is_available=TRUE AND zone=? AND type=?) OR slot_id=?)",
+      "WHERE ((is_available=1 AND zone=? AND type=?) OR slot_id=?)",
       "ORDER BY slot_no",
       sep="\n"
     )
@@ -569,7 +568,7 @@ server <- function(input, output, session){
       showNotification("Selected slot not found.", type="error")
       return()
     }
-    if (new_slot_id != old_slot_id && !isTRUE(ok$is_available[1])) {
+    if (new_slot_id != old_slot_id && as.integer(ok$is_available[1]) != 1) {
       showNotification("That slot is not available anymore.", type="error")
       return()
     }
@@ -578,10 +577,10 @@ server <- function(input, output, session){
     
     tryCatch({
       if (new_slot_id != old_slot_id) {
-        db_exec("UPDATE parking_slots SET is_available=TRUE WHERE slot_id=?", params=list(old_slot_id))
-        db_exec("UPDATE parking_slots SET is_available=FALSE WHERE slot_id=?", params=list(new_slot_id))
+        db_exec("UPDATE parking_slots SET is_available=1 WHERE slot_id=?", params=list(old_slot_id))
+        db_exec("UPDATE parking_slots SET is_available=0 WHERE slot_id=?", params=list(new_slot_id))
       } else {
-        db_exec("UPDATE parking_slots SET is_available=FALSE WHERE slot_id=?", params=list(old_slot_id))
+        db_exec("UPDATE parking_slots SET is_available=0 WHERE slot_id=?", params=list(old_slot_id))
       }
       
       db_exec("UPDATE parking_slots SET zone=?, type=?, rate=? WHERE slot_id=?",
@@ -633,13 +632,13 @@ server <- function(input, output, session){
         "WHERE reservation_id=?",
         sep="\n"
       ), params=list(
-        format(time_out, "%Y-%m-%d %H:%M:%S"),
+        fmt_ts(time_out),
         as.integer(hours),
         as.numeric(total),
         as.integer(input$end_reservation)
       ))
       
-      db_exec("UPDATE parking_slots SET is_available=TRUE WHERE slot_id=?",
+      db_exec("UPDATE parking_slots SET is_available=1 WHERE slot_id=?",
               params=list(as.integer(info$slot_id[1])))
       
       showModal(modalDialog(
