@@ -1,9 +1,14 @@
 # =========================
-# ParkEase (SQLITE + EDIT ACTIVE RESERVATIONS + ANALYTICS)
+# ParkEase (SQLITE + EDIT ACTIVE RESERVATIONS + ANALYTICS + HISTORY + SIDEBAR NAV)
 # - SQLite (RSQLite) backend
 # - Auto-create tables + indexes
 # - Fresh DB connection per query
 # - Edit Active reservations + End w/ ticket + Analytics
+# - Sidebar navigation (functional)
+# - Reservation History page + Filters + Export Excel/PDF
+# - FIX: Ticket prints clean (only ticket, no dashboard UI)
+# - FIX: No JS leakage on login
+# - UI polish: subtle animations + cleaner analytics plots on dark UI
 # =========================
 
 library(shiny)
@@ -15,76 +20,49 @@ library(digest)
 library(ggplot2)
 
 APP_TZ <- Sys.getenv("APP_TZ", "Asia/Manila")
-Sys.setenv(TZ = APP_TZ)  # makes Sys.time() follow PH time
+Sys.setenv(TZ = APP_TZ)
 
 # ---------------- LOGIN CREDENTIALS ----------------
 ADMIN_USER <- "admin"
 ADMIN_PASS_HASH <- digest("parkease123", algo = "sha256")
 
-# ================== SQLITE DB HELPERS ==================
 # ================== SQLITE DB HELPERS (DEPLOY-SAFE) ==================
-# Seed DB lives in your app folder (tracked in GitHub)
 SEED_DB <- Sys.getenv("SEED_DB", "parkease_seed.sqlite")
-
-# Live DB is created in a writable temp folder (works on shinyapps.io)
 LIVE_DB <- Sys.getenv("LIVE_DB", "parkease_live.sqlite")
 
 get_db_path <- function() {
   live_path <- file.path(tempdir(), LIVE_DB)
-  
-  # First run: copy bundled seed -> temp live db
   if (!file.exists(live_path)) {
     seed_path <- file.path(getwd(), SEED_DB)
-    
-    # If seed doesn't exist yet, create an empty live db anyway
-    if (file.exists(seed_path)) {
-      file.copy(seed_path, live_path, overwrite = TRUE)
-    }
+    if (file.exists(seed_path)) file.copy(seed_path, live_path, overwrite = TRUE)
   }
-  
   live_path
 }
 
 get_con <- function() {
   db_path <- get_db_path()
   con <- dbConnect(RSQLite::SQLite(), dbname = db_path)
-  
-  # Safer behavior for concurrency + speed
   try(dbExecute(con, "PRAGMA journal_mode = WAL;"), silent = TRUE)
   try(dbExecute(con, "PRAGMA foreign_keys = ON;"), silent = TRUE)
   try(dbExecute(con, "PRAGMA busy_timeout = 5000;"), silent = TRUE)
-  
   con
 }
-
 
 db_get <- function(sql, params = NULL) {
   con <- NULL
   on.exit({ if (!is.null(con)) try(dbDisconnect(con), silent = TRUE) }, add = TRUE)
   con <- get_con()
-  
-  if (is.null(params)) {
-    return(dbGetQuery(con, sql))
-  } else {
-    return(dbGetQuery(con, sql, params = params))
-  }
+  if (is.null(params)) dbGetQuery(con, sql) else dbGetQuery(con, sql, params = params)
 }
 
 db_exec <- function(sql, params = NULL) {
   con <- NULL
   on.exit({ if (!is.null(con)) try(dbDisconnect(con), silent = TRUE) }, add = TRUE)
   con <- get_con()
-  
-  if (is.null(params)) {
-    return(dbExecute(con, sql))
-  } else {
-    return(dbExecute(con, sql, params = params))
-  }
+  if (is.null(params)) dbExecute(con, sql) else dbExecute(con, sql, params = params)
 }
 
 ensure_tables <- function() {
-  
-  # parking_slots: is_available stored as INTEGER 1/0 (SQLite style)
   db_exec(paste(
     "CREATE TABLE IF NOT EXISTS parking_slots (",
     "  slot_id INTEGER PRIMARY KEY AUTOINCREMENT,",
@@ -98,7 +76,6 @@ ensure_tables <- function() {
     sep = "\n"
   ))
   
-  # reservations: start_time/time_out stored as TEXT timestamps (from R, PH time)
   db_exec(paste(
     "CREATE TABLE IF NOT EXISTS reservations (",
     "  reservation_id INTEGER PRIMARY KEY AUTOINCREMENT,",
@@ -127,11 +104,7 @@ to_posix <- function(x) {
   if (inherits(x, "POSIXct")) return(x)
   suppressWarnings(as.POSIXct(x, tz = Sys.timezone()))
 }
-
-fmt_ts <- function(x) {
-  # store as "YYYY-mm-dd HH:MM:SS" string
-  format(x, "%Y-%m-%d %H:%M:%S")
-}
+fmt_ts <- function(x) format(x, "%Y-%m-%d %H:%M:%S")
 
 rate_for_type <- function(type) {
   switch(type,
@@ -142,34 +115,64 @@ rate_for_type <- function(type) {
          30)
 }
 
+# --------- DARK PLOT THEME (Analytics UI fix) ----------
+theme_dark_dashboard <- function() {
+  bg    <- "#020617"
+  fg    <- "#E5E7EB"
+  muted <- "#CBD5F5"
+  gridc <- grDevices::adjustcolor("#94A3B8", alpha.f = 0.12)
+  
+  theme_minimal(base_size = 12) +
+    theme(
+      plot.background  = element_rect(fill = bg, color = NA),
+      panel.background = element_rect(fill = bg, color = NA),
+      legend.background = element_rect(fill = bg, color = NA),
+      legend.key = element_rect(fill = bg, color = NA),
+      
+      text = element_text(color = fg, family = "Segoe UI"),
+      plot.title = element_text(face = "bold", size = 14, color = fg),
+      axis.title = element_text(color = muted),
+      axis.text  = element_text(color = muted),
+      
+      panel.grid.major = element_line(color = gridc),
+      panel.grid.minor = element_blank(),
+      
+      axis.ticks = element_blank(),
+      plot.margin = margin(10, 10, 10, 10)
+    )
+}
+
 # ---------------- UI ----------------
 ui <- fluidPage(
   tags$head(
     tags$link(rel="stylesheet", type="text/css", href="style.css"),
-    tags$link(
-      rel="stylesheet",
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
-    ),
-    tags$script(HTML("
-  // 👁 Password toggle (safe)
-  $(document).on('click', '#toggle_pass', function() {
-    var input = document.getElementById('login_pass');
-    if (!input) return;
-
-    if (input.type === 'password') {
-      input.type = 'text';
-      this.classList.remove('fa-eye');
-      this.classList.add('fa-eye-slash');
-    } else {
-      input.type = 'password';
-      this.classList.remove('fa-eye-slash');
-      this.classList.add('fa-eye');
-    }
-  });
-
-  // Ticket printing will be re-added after deploy stability.
-"))
+    tags$link(rel="stylesheet",
+              href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"),
     
+    # ✅ Only JS here (no CSS). Prevents code leakage on login.
+    tags$script(HTML("
+      // 👁 Password toggle (safe)
+      $(document).on('click', '#toggle_pass', function() {
+        var input = document.getElementById('login_pass');
+        if (!input) return;
+
+        if (input.type === 'password') {
+          input.type = 'text';
+          this.classList.remove('fa-eye');
+          this.classList.add('fa-eye-slash');
+        } else {
+          input.type = 'password';
+          this.classList.remove('fa-eye-slash');
+          this.classList.add('fa-eye');
+        }
+      });
+
+      // Ticket print (CSS handles printing ONLY the ticket)
+      window.printTicket = function() {
+        window.focus();
+        window.print();
+      };
+    "))
   ),
   uiOutput("app_ui")
 )
@@ -179,6 +182,7 @@ server <- function(input, output, session){
   
   logged_in <- reactiveVal(FALSE)
   refresh <- reactiveVal(0)
+  current_page <- reactiveVal("overview") # overview | add | reserve | history
   
   tryCatch(ensure_tables(), error = function(e) {
     showNotification(paste("DB init error:", conditionMessage(e)), type="error", duration=NULL)
@@ -186,15 +190,9 @@ server <- function(input, output, session){
   
   # ---------- LOGIN UI ----------
   login_ui <- function(){
-    div(style="height:100vh; display:flex; justify-content:center; align-items:center;",
-        div(style="
-          background:#020617;
-          padding:40px;
-          border-radius:16px;
-          width:360px;
-          box-shadow:0 0 40px rgba(0,0,0,0.6);
-        ",
-            h2("ParkEase Login", style="text-align:center; margin-bottom:20px;"),
+    div(class="login-wrap",
+        div(class="login-card",
+            h2("ParkEase Login", class="login-title"),
             textInput("login_user","Username"),
             div(style="position:relative;",
                 passwordInput("login_pass","Password"),
@@ -208,86 +206,185 @@ server <- function(input, output, session){
     )
   }
   
-  # ---------- MAIN UI ----------
+  # ---------- SIDEBAR ----------
+  sidebar_ui <- function() {
+    pg <- current_page()
+    btn_class <- function(name) if (identical(pg, name)) "side-btn active" else "side-btn"
+    
+    div(class="sidebar",
+        actionButton("nav_overview","Overview", class=btn_class("overview")),
+        hr(),
+        actionButton("nav_add","➕ Add Slot", class=btn_class("add")),
+        actionButton("nav_reserve","⏱ Reserve Slot", class=btn_class("reserve")),
+        actionButton("nav_history","🧾 Reservation History", class=btn_class("history"))
+    )
+  }
+  
+  # ---------- PAGE UIs ----------
+  page_overview_ui <- function() {
+    tagList(
+      h2("Parking Management"),
+      p("Monitor and manage parking slots in real time"),
+      
+      div(class="stats-row",
+          div(class="stat-card green", span("Total Slots"), h1(textOutput("total_slots"))),
+          div(class="stat-card blue", span("Available"), h1(textOutput("available_slots"))),
+          div(class="stat-card orange", span("Occupied"), h1(textOutput("occupied_slots"))),
+          div(class="stat-card purple", span("Revenue Today"), h1(textOutput("revenue_today")))
+      ),
+      
+      div(class="form-row",
+          div(class="panel",
+              h3("Add Parking Slot"),
+              textInput("slot_no","Slot Number","A-101"),
+              selectInput("zone","Zone",c("Zone A","Zone B","Zone C")),
+              selectInput("type","Type",c("Regular","Compact","Electric","Disabled")),
+              actionButton("add_slot","Add Slot",class="btn-primary")
+          ),
+          
+          div(class="panel",
+              h3("Reserve Slot"),
+              selectInput("res_zone","Zone",c("Zone A","Zone B","Zone C"), selected="Zone A"),
+              selectInput("res_type","Type",c("Regular","Compact","Electric","Disabled"), selected="Regular"),
+              selectInput("slot_sel","Available Slot",choices=c("Loading..."="")),
+              textInput("vehicle","Vehicle Number"),
+              textInput("driver","Driver Name"),
+              actionButton("reserve","Reserve Slot",class="btn-success")
+          )
+      ),
+      
+      div(class="panel panel-bright",
+          h3("🕒 Active Reservations"),
+          DTOutput("active_table")
+      ),
+      
+      div(class="panel panel-bright",
+          h3("📊 Analytics"),
+          tabsetPanel(
+            tabPanel("Revenue",
+                     plotOutput("daily_revenue", height=260),
+                     plotOutput("weekly_revenue", height=260),
+                     plotOutput("monthly_revenue", height=260)
+            ),
+            tabPanel("Most Used Zones",
+                     plotOutput("zone_usage", height=320)
+            ),
+            tabPanel("Peak Hours",
+                     plotOutput("peak_hours", height=320)
+            )
+          )
+      )
+    )
+  }
+  
+  page_add_ui <- function() {
+    tagList(
+      h2("➕ Add Slot"),
+      p("Create new parking slots and review the slot list."),
+      div(class="panel",
+          h3("Add Parking Slot"),
+          textInput("slot_no","Slot Number","A-101"),
+          selectInput("zone","Zone",c("Zone A","Zone B","Zone C")),
+          selectInput("type","Type",c("Regular","Compact","Electric","Disabled")),
+          actionButton("add_slot","Add Slot",class="btn-primary")
+      ),
+      div(class="panel panel-bright",
+          h3("🅿 Parking Slots"),
+          DTOutput("slots_table")
+      )
+    )
+  }
+  
+  page_reserve_ui <- function() {
+    tagList(
+      h2("⏱ Reserve Slot"),
+      p("Reserve available slots and manage active reservations."),
+      div(class="panel",
+          h3("Reserve Slot"),
+          selectInput("res_zone","Zone",c("Zone A","Zone B","Zone C"), selected="Zone A"),
+          selectInput("res_type","Type",c("Regular","Compact","Electric","Disabled"), selected="Regular"),
+          selectInput("slot_sel","Available Slot",choices=c("Loading..."="")),
+          textInput("vehicle","Vehicle Number"),
+          textInput("driver","Driver Name"),
+          actionButton("reserve","Reserve Slot",class="btn-success")
+      ),
+      div(class="panel panel-bright",
+          h3("🕒 Active Reservations"),
+          DTOutput("active_table")
+      )
+    )
+  }
+  
+  page_history_ui <- function() {
+    tagList(
+      h2("🧾 Reservation History"),
+      p("View completed reservations with filters and export options."),
+      
+      div(class="panel",
+          h3("Filters"),
+          fluidRow(
+            column(6,
+                   dateRangeInput("hist_date","Date Range (Time Out)",
+                                  start = Sys.Date() - 30, end = Sys.Date())
+            ),
+            column(3,
+                   selectInput("hist_zone","Zone",
+                               choices = c("All Zones","Zone A","Zone B","Zone C"),
+                               selected = "All Zones")
+            ),
+            column(3,
+                   textInput("hist_vehicle","Vehicle contains", placeholder = "e.g., ABC-123")
+            )
+          ),
+          fluidRow(
+            column(6, downloadButton("dl_excel","Export to Excel", class="btn-primary")),
+            column(6, downloadButton("dl_pdf","Export to PDF", class="btn-success"))
+          )
+      ),
+      
+      div(class="panel panel-bright",
+          h3("Completed Reservations"),
+          DTOutput("history_table")
+      )
+    )
+  }
+  
   main_ui <- function(){
     tagList(
       div(class="topbar",
           div(class="brand","ParkEase"),
           actionButton("logout","Logout", class="btn-end")
       ),
-      
       div(class="layout",
-          div(class="sidebar",
-              actionButton("nav_overview","Overview",class="side-btn active"),
-              hr(),
-              actionButton("nav_add","➕ Add Slot",class="side-btn"),
-              actionButton("nav_reserve","⏱ Reserve Slot",class="side-btn")
-          ),
-          
-          div(class="content",
-              h2("Parking Management"),
-              p("Monitor and manage parking slots in real time"),
-              
-              div(class="stats-row",
-                  div(class="stat-card green", span("Total Slots"), h1(textOutput("total_slots"))),
-                  div(class="stat-card blue", span("Available"), h1(textOutput("available_slots"))),
-                  div(class="stat-card orange", span("Occupied"), h1(textOutput("occupied_slots"))),
-                  div(class="stat-card purple", span("Revenue Today"), h1(textOutput("revenue_today")))
-              ),
-              
-              div(class="form-row",
-                  div(class="panel",
-                      h3("Add Parking Slot"),
-                      textInput("slot_no","Slot Number","A-101"),
-                      selectInput("zone","Zone",c("Zone A","Zone B","Zone C")),
-                      selectInput("type","Type",c("Regular","Compact","Electric","Disabled")),
-                      actionButton("add_slot","Add Slot",class="btn-primary")
-                  ),
-                  
-                  div(class="panel",
-                      h3("Reserve Slot"),
-                      selectInput("res_zone","Zone",c("Zone A","Zone B","Zone C"), selected="Zone A"),
-                      selectInput("res_type","Type",c("Regular","Compact","Electric","Disabled"), selected="Regular"),
-                      selectInput("slot_sel","Available Slot",choices=c("Loading..."="")),
-                      textInput("vehicle","Vehicle Number"),
-                      textInput("driver","Driver Name"),
-                      actionButton("reserve","Reserve Slot",class="btn-success")
-                  )
-              ),
-              
-              div(class="panel panel-bright",
-                  h3("🕒 Active Reservations"),
-                  DTOutput("active_table")
-              ),
-              
-              div(class="panel panel-bright",
-                  h3("📊 Analytics"),
-                  tabsetPanel(
-                    tabPanel("Revenue",
-                             plotOutput("daily_revenue", height=250),
-                             plotOutput("weekly_revenue", height=250),
-                             plotOutput("monthly_revenue", height=250)
-                    ),
-                    tabPanel("Most Used Zones",
-                             plotOutput("zone_usage", height=300)
-                    ),
-                    tabPanel("Peak Hours",
-                             plotOutput("peak_hours", height=300)
-                    )
-                  )
-              )
-          )
+          sidebar_ui(),
+          div(class="content", uiOutput("page_ui"))
       )
     )
   }
   
   output$app_ui <- renderUI({ if (logged_in()) main_ui() else login_ui() })
   
+  output$page_ui <- renderUI({
+    req(logged_in())
+    pg <- current_page()
+    if (pg == "overview") return(page_overview_ui())
+    if (pg == "add")      return(page_add_ui())
+    if (pg == "reserve")  return(page_reserve_ui())
+    if (pg == "history")  return(page_history_ui())
+    page_overview_ui()
+  })
+  
+  observeEvent(input$nav_overview, { req(logged_in()); current_page("overview") })
+  observeEvent(input$nav_add,      { req(logged_in()); current_page("add") })
+  observeEvent(input$nav_reserve,  { req(logged_in()); current_page("reserve") })
+  observeEvent(input$nav_history,  { req(logged_in()); current_page("history") })
+  
   observeEvent(input$login_btn,{
     req(input$login_user, input$login_pass)
     if (digest(input$login_pass,"sha256")==ADMIN_PASS_HASH && input$login_user==ADMIN_USER) {
       logged_in(TRUE)
       output$login_error <- renderText("")
+      current_page("overview")
       refresh(refresh() + 1)
     } else {
       output$login_error <- renderText("Invalid username or password")
@@ -329,6 +426,21 @@ server <- function(input, output, session){
     tryCatch(db_get(sql), error = function(e) data.frame())
   })
   
+  history_raw <- reactive({
+    refresh()
+    sql <- paste(
+      "SELECT r.reservation_id, s.slot_no, s.zone, s.type,",
+      "       r.vehicle_no, r.driver_name, r.start_time, r.time_out,",
+      "       r.duration_hours, r.total_fee",
+      "FROM reservations r",
+      "JOIN parking_slots s ON r.slot_id=s.slot_id",
+      "WHERE r.status='Completed' AND r.time_out IS NOT NULL",
+      "ORDER BY r.time_out DESC",
+      sep="\n"
+    )
+    tryCatch(db_get(sql), error = function(e) data.frame())
+  })
+  
   # ---------- STATS ----------
   output$total_slots <- renderText(nrow(slots()))
   output$available_slots <- renderText({
@@ -341,12 +453,8 @@ server <- function(input, output, session){
     if (nrow(s) == 0 || is.null(s$is_available)) return(0)
     sum(!as.logical(as.integer(s$is_available)), na.rm=TRUE)
   })
-  
   output$revenue_today <- renderText({
     refresh()
-    
-    # Since time_out is stored as TEXT "YYYY-mm-dd HH:MM:SS",
-    # we can use date(time_out) comparison safely.
     sql <- paste(
       "SELECT COALESCE(SUM(total_fee),0) AS total",
       "FROM reservations",
@@ -354,25 +462,24 @@ server <- function(input, output, session){
       "  AND date(time_out) = date('now','localtime')",
       sep = "\n"
     )
-    
     q <- tryCatch(db_get(sql), error = function(e) data.frame(total = 0))
     total <- if (nrow(q) == 0) 0 else q$total[1]
-    
     paste0("₱", formatC(as.numeric(total), digits = 2, format = "f"))
   })
   
-  # ---------- ANALYTICS ----------
+  # ---------- ANALYTICS (dark-friendly + colors restored) ----------
   output$daily_revenue <- renderPlot({
     df <- completed()
     if (nrow(df)==0) return(NULL)
     df$time_out <- to_posix(df$time_out)
     df$date <- as.Date(df$time_out)
     agg <- aggregate(total_fee ~ date, df, sum)
+    
     ggplot(agg, aes(date, total_fee)) +
       geom_line(color="#22c55e", linewidth=1.2) +
       geom_point(color="#22c55e", size=3) +
       labs(title="Daily Revenue", y="₱", x="Date") +
-      theme_minimal()
+      theme_dark_dashboard()
   })
   
   output$weekly_revenue <- renderPlot({
@@ -381,10 +488,11 @@ server <- function(input, output, session){
     df$time_out <- to_posix(df$time_out)
     df$week <- format(as.Date(df$time_out), "%Y-%U")
     agg <- aggregate(total_fee ~ week, df, sum)
+    
     ggplot(agg, aes(week, total_fee)) +
       geom_col(fill="#3b82f6") +
       labs(title="Weekly Revenue", y="₱", x="Week") +
-      theme_minimal()
+      theme_dark_dashboard()
   })
   
   output$monthly_revenue <- renderPlot({
@@ -393,20 +501,22 @@ server <- function(input, output, session){
     df$time_out <- to_posix(df$time_out)
     df$month <- format(as.Date(df$time_out), "%Y-%m")
     agg <- aggregate(total_fee ~ month, df, sum)
+    
     ggplot(agg, aes(month, total_fee)) +
       geom_col(fill="#a855f7") +
       labs(title="Monthly Revenue", y="₱", x="Month") +
-      theme_minimal()
+      theme_dark_dashboard()
   })
   
   output$zone_usage <- renderPlot({
     df <- completed()
     if (nrow(df)==0 || is.null(df$zone)) return(NULL)
     agg <- aggregate(reservation_id ~ zone, df, length)
+    
     ggplot(agg, aes(zone, reservation_id)) +
       geom_col(fill="#f97316") +
       labs(title="Most Used Zones", y="Reservations", x="Zone") +
-      theme_minimal()
+      theme_dark_dashboard()
   })
   
   output$peak_hours <- renderPlot({
@@ -415,17 +525,17 @@ server <- function(input, output, session){
     df$start_time <- to_posix(df$start_time)
     df$hour <- format(df$start_time, "%H")
     agg <- aggregate(reservation_id ~ hour, df, length)
+    
     ggplot(agg, aes(hour, reservation_id)) +
       geom_col(fill="#22c55e") +
       labs(title="Peak Hours", y="Reservations", x="Hour") +
-      theme_minimal()
+      theme_dark_dashboard()
   })
   
   # ---------- RESERVE CASCADE ----------
   observe({
     req(logged_in(), input$res_zone, input$res_type)
     refresh()
-    
     sql <- paste(
       "SELECT slot_id, slot_no",
       "FROM parking_slots",
@@ -434,10 +544,8 @@ server <- function(input, output, session){
       sep="\n"
     )
     
-    avail <- tryCatch(
-      db_get(sql, params=list(input$res_zone, input$res_type)),
-      error=function(e) data.frame()
-    )
+    avail <- tryCatch(db_get(sql, params=list(input$res_zone, input$res_type)),
+                      error=function(e) data.frame())
     
     if (nrow(avail)==0) {
       updateSelectInput(session,"slot_sel", choices=c("No available slots"=""), selected="")
@@ -657,8 +765,7 @@ server <- function(input, output, session){
       showModal(modalDialog(
         easyClose = TRUE,
         footer = tagList(
-          tags$button("🖨 Print Ticket", class="btn-success",
-                      onclick="window.print()"),
+          tags$button("🖨 Print Ticket", class="btn-success", onclick="printTicket();"),
           modalButton("Close")
         ),
         div(id="ticket_area", class="ticket",
@@ -682,7 +789,7 @@ server <- function(input, output, session){
     })
   })
   
-  # ---------- TABLE ----------
+  # ---------- TABLE: ACTIVE ----------
   output$active_table <- renderDT({
     df <- active_reservations()
     if (nrow(df)==0) {
@@ -716,6 +823,113 @@ server <- function(input, output, session){
       )
     )
   })
+  
+  # ---------- TABLE: SLOTS ----------
+  output$slots_table <- renderDT({
+    s <- slots()
+    if (nrow(s) == 0) {
+      return(datatable(data.frame(Message="No slots yet"),
+                       options=list(dom="t"), rownames=FALSE))
+    }
+    s$is_available <- ifelse(as.integer(s$is_available) == 1, "Yes", "No")
+    datatable(
+      s[, c("slot_no","zone","type","rate","is_available")],
+      rownames = FALSE,
+      options = list(pageLength = 10, dom = "tip")
+    )
+  })
+  
+  # ---------- HISTORY FILTERED ----------
+  history_filtered <- reactive({
+    df <- history_raw()
+    if (nrow(df) == 0) return(df)
+    
+    df$time_out_posix <- to_posix(df$time_out)
+    df$time_out_date  <- as.Date(df$time_out_posix)
+    
+    if (!is.null(input$hist_date) && length(input$hist_date) == 2 &&
+        !any(is.na(input$hist_date))) {
+      df <- df[df$time_out_date >= input$hist_date[1] & df$time_out_date <= input$hist_date[2], , drop=FALSE]
+    }
+    
+    if (!is.null(input$hist_zone) && input$hist_zone != "All Zones") {
+      df <- df[df$zone == input$hist_zone, , drop=FALSE]
+    }
+    
+    if (!is.null(input$hist_vehicle) && nzchar(trimws(input$hist_vehicle))) {
+      pat <- trimws(input$hist_vehicle)
+      df <- df[grepl(pat, df$vehicle_no, ignore.case = TRUE), , drop=FALSE]
+    }
+    
+    df
+  })
+  
+  output$history_table <- renderDT({
+    req(logged_in())
+    df <- history_filtered()
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message="No completed reservations found for the selected filters."),
+                       options=list(dom="t"), rownames=FALSE))
+    }
+    
+    show_df <- df[, c("reservation_id","slot_no","zone","type","vehicle_no","driver_name",
+                      "start_time","time_out","duration_hours","total_fee")]
+    show_df$total_fee <- paste0("₱", formatC(as.numeric(show_df$total_fee), digits = 2, format = "f"))
+    
+    datatable(show_df, rownames = FALSE, options = list(pageLength = 10, dom = "tip"))
+  })
+  
+  # ---------- EXPORT: EXCEL ----------
+  output$dl_excel <- downloadHandler(
+    filename = function() paste0("parkease_reservation_history_", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"),
+    content = function(file) {
+      df <- history_filtered()
+      if (nrow(df) == 0) stop("No data to export.")
+      
+      if (!requireNamespace("openxlsx", quietly = TRUE)) {
+        stop("Package 'openxlsx' is required. Install: install.packages('openxlsx')")
+      }
+      
+      out <- df[, c("reservation_id","slot_no","zone","type","vehicle_no","driver_name",
+                    "start_time","time_out","duration_hours","total_fee")]
+      
+      wb <- openxlsx::createWorkbook()
+      openxlsx::addWorksheet(wb, "History")
+      openxlsx::writeData(wb, "History", out)
+      openxlsx::setColWidths(wb, "History", cols = 1:ncol(out), widths = "auto")
+      openxlsx::saveWorkbook(wb, file, overwrite = TRUE)
+    }
+  )
+  
+  # ---------- EXPORT: PDF (A4 Landscape + fits better) ----------
+  output$dl_pdf <- downloadHandler(
+    filename = function() paste0("parkease_reservation_history_", format(Sys.Date(), "%Y-%m-%d"), ".pdf"),
+    content = function(file) {
+      df <- history_filtered()
+      if (nrow(df) == 0) stop("No data to export.")
+      
+      if (!requireNamespace("gridExtra", quietly = TRUE) ||
+          !requireNamespace("grid", quietly = TRUE)) {
+        stop("Install required packages: install.packages(c('gridExtra'))")
+      }
+      
+      out <- df[, c("reservation_id","slot_no","zone","type","vehicle_no","driver_name",
+                    "start_time","time_out","duration_hours","total_fee")]
+      out$total_fee <- paste0("₱", formatC(as.numeric(out$total_fee), digits = 2, format = "f"))
+      
+      grDevices::pdf(file, width = 11.69, height = 8.27)  # A4 landscape
+      grid::grid.newpage()
+      grid::grid.text("ParkEase — Reservation History (Completed)",
+                      y = 0.97, gp = grid::gpar(fontsize = 16, fontface = "bold"))
+      
+      tbl <- gridExtra::tableGrob(out, rows = NULL,
+                                  theme = gridExtra::ttheme_default(base_size = 8))
+      grid::pushViewport(grid::viewport(y = 0.48, height = 0.82))
+      grid::grid.draw(tbl)
+      grid::popViewport()
+      grDevices::dev.off()
+    }
+  )
 }
 
 shinyApp(ui, server)
