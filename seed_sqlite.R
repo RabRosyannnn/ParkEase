@@ -207,14 +207,39 @@ seed_reservations <- function(con) {
   }
 }
 
-# ---------- RUN ----------
-if (file.exists(SEED_DB)) {
-  message("Deleting existing seed db: ", SEED_DB)
-  file.remove(SEED_DB)
+# ---------- RUN (WINDOWS-SAFE) ----------
+# 1) Make sure no old connection is holding the DB file
+try({ if (exists("con")) dbDisconnect(con) }, silent = TRUE)
+rm(list = c("con"), envir = .GlobalEnv)
+gc()
+
+# 2) Remove old DB + side files (WAL/SHM/JOURNAL) with retries
+files <- c(
+  SEED_DB,
+  paste0(SEED_DB, "-wal"),
+  paste0(SEED_DB, "-shm"),
+  paste0(SEED_DB, "-journal")
+)
+
+for (f in files) {
+  if (file.exists(f)) {
+    message("Deleting existing file: ", f)
+    deleted <- FALSE
+    for (i in 1:8) {
+      deleted <- tryCatch(file.remove(f), error = function(e) FALSE)
+      if (isTRUE(deleted)) break
+      Sys.sleep(0.25)
+    }
+    if (!isTRUE(deleted)) {
+      stop("Permission denied / file locked: ", f,
+           "\nClose the Shiny app + restart RStudio then run the seeder again.")
+    }
+  }
 }
 
+# 3) Create fresh seed DB
 con <- get_con_seed()
-on.exit(dbDisconnect(con), add = TRUE)
+on.exit(try(dbDisconnect(con), silent = TRUE), add = TRUE)
 
 create_tables(con)
 seed_slots(con)
