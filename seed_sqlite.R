@@ -207,13 +207,16 @@ seed_reservations <- function(con) {
   }
 }
 
-# ---------- RUN (WINDOWS-SAFE) ----------
-# 1) Make sure no old connection is holding the DB file
-try({ if (exists("con")) dbDisconnect(con) }, silent = TRUE)
-rm(list = c("con"), envir = .GlobalEnv)
+# ---------- RUN (FRESH-START + NO CLOSED-CONNECTION BUG) ----------
+
+# Close any accidental open connection object
+if (exists("con", envir = .GlobalEnv)) {
+  try(DBI::dbDisconnect(get("con", envir = .GlobalEnv)), silent = TRUE)
+  rm(list = "con", envir = .GlobalEnv)
+}
 gc()
 
-# 2) Remove old DB + side files (WAL/SHM/JOURNAL) with retries
+# Delete old DB + WAL/SHM/JOURNAL
 files <- c(
   SEED_DB,
   paste0(SEED_DB, "-wal"),
@@ -224,26 +227,34 @@ files <- c(
 for (f in files) {
   if (file.exists(f)) {
     message("Deleting existing file: ", f)
-    deleted <- FALSE
-    for (i in 1:8) {
-      deleted <- tryCatch(file.remove(f), error = function(e) FALSE)
-      if (isTRUE(deleted)) break
-      Sys.sleep(0.25)
+    ok <- FALSE
+    for (i in 1:10) {
+      ok <- tryCatch(file.remove(f), error = function(e) FALSE)
+      if (isTRUE(ok)) break
+      Sys.sleep(0.2)
     }
-    if (!isTRUE(deleted)) {
-      stop("Permission denied / file locked: ", f,
-           "\nClose the Shiny app + restart RStudio then run the seeder again.")
-    }
+    if (!isTRUE(ok)) stop("File locked: ", f, " (close app + restart RStudio)")
   }
 }
 
-# 3) Create fresh seed DB
-con <- get_con_seed()
-on.exit(try(dbDisconnect(con), silent = TRUE), add = TRUE)
+# Create NEW DB connection and seed (no on.exit needed)
+con <- DBI::dbConnect(RSQLite::SQLite(), dbname = file.path(getwd(), SEED_DB))
+
+# PRAGMAs (safe)
+try(DBI::dbExecute(con, "PRAGMA foreign_keys = ON;"), silent = TRUE)
+try(DBI::dbExecute(con, "PRAGMA journal_mode = DELETE;"), silent = TRUE)  # IMPORTANT while seeding
+try(DBI::dbExecute(con, "PRAGMA busy_timeout = 5000;"), silent = TRUE)
 
 create_tables(con)
 seed_slots(con)
 seed_reservations(con)
+
+# Switch to WAL after seeding (optional)
+try(DBI::dbExecute(con, "PRAGMA journal_mode = WAL;"), silent = TRUE)
+
+DBI::dbDisconnect(con)
+rm(list = "con", envir = .GlobalEnv)
+gc()
 
 message("✅ Seed DB created: ", file.path(getwd(), SEED_DB))
 message("Next: run your app. You should see 168 slots, active reservations, and analytics charts.")
