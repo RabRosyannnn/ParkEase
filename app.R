@@ -151,35 +151,25 @@ ui <- fluidPage(
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
     ),
     tags$script(HTML("
-      // 👁 Password toggle
-      $(document).on('click', '#toggle_pass', function() {
-        let input = document.getElementById('login_pass');
-        if (!input) return;
+  // 👁 Password toggle (safe)
+  $(document).on('click', '#toggle_pass', function() {
+    var input = document.getElementById('login_pass');
+    if (!input) return;
 
-        if (input.type === 'password') {
-          input.type = 'text';
-          this.classList.remove('fa-eye');
-          this.classList.add('fa-eye-slash');
-        } else {
-          input.type = 'password';
-          this.classList.remove('fa-eye-slash');
-          this.classList.add('fa-eye');
-        }
-      });
+    if (input.type === 'password') {
+      input.type = 'text';
+      this.classList.remove('fa-eye');
+      this.classList.add('fa-eye-slash');
+    } else {
+      input.type = 'password';
+      this.classList.remove('fa-eye-slash');
+      this.classList.add('fa-eye');
+    }
+  });
 
-      // 🖨 Ticket print
-      function printTicket() {
-        var printContents = document.getElementById('ticket_area').innerHTML;
-        var win = window.open('', '', 'height=700,width=420');
-        win.document.write('<html><head><title>Parking Ticket</title></head><body>');
-        win.document.write(printContents);
-        win.document.write('</body></html>');
-        win.document.close();
-        win.focus();
-        win.print();
-        win.close();
-      }
-    "))
+  // Ticket printing will be re-added after deploy stability.
+"))
+    
   ),
   uiOutput("app_ui")
 )
@@ -667,7 +657,8 @@ server <- function(input, output, session){
       showModal(modalDialog(
         easyClose = TRUE,
         footer = tagList(
-          tags$button("🖨 Print Ticket", class="btn-success", onclick="printTicket()"),
+          tags$button("🖨 Print Ticket", class="btn-success",
+                      onclick="window.print()"),
           modalButton("Close")
         ),
         div(id="ticket_area", class="ticket",

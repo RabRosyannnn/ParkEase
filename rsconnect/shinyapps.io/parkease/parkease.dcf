@@ -1,0 +1,10 @@
+name: parkease
+title:
+username: parkease
+account: parkease
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16379759
+bundleId: 11407593
+url: https://parkease.shinyapps.io/parkease/
+version: 1
