@@ -1,6 +1,18 @@
+# RStudio
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+
+# SQLite - ignore runtime/live DB + temp files
+parkease_live.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Optional: ignore any other sqlite db EXCEPT the seed file
 *.sqlite
+!parkease_seed.sqlite
+
 *.sqlite3
+!parkease_seed.sqlite3

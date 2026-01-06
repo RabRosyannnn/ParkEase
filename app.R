@@ -22,18 +22,41 @@ ADMIN_USER <- "admin"
 ADMIN_PASS_HASH <- digest("parkease123", algo = "sha256")
 
 # ================== SQLITE DB HELPERS ==================
-SQLITE_FILE <- Sys.getenv("SQLITE_FILE", "parkease.sqlite")
+# ================== SQLITE DB HELPERS (DEPLOY-SAFE) ==================
+# Seed DB lives in your app folder (tracked in GitHub)
+SEED_DB <- Sys.getenv("SEED_DB", "parkease_seed.sqlite")
+
+# Live DB is created in a writable temp folder (works on shinyapps.io)
+LIVE_DB <- Sys.getenv("LIVE_DB", "parkease_live.sqlite")
+
+get_db_path <- function() {
+  live_path <- file.path(tempdir(), LIVE_DB)
+  
+  # First run: copy bundled seed -> temp live db
+  if (!file.exists(live_path)) {
+    seed_path <- file.path(getwd(), SEED_DB)
+    
+    # If seed doesn't exist yet, create an empty live db anyway
+    if (file.exists(seed_path)) {
+      file.copy(seed_path, live_path, overwrite = TRUE)
+    }
+  }
+  
+  live_path
+}
 
 get_con <- function() {
-  db_path <- file.path(getwd(), SQLITE_FILE)
+  db_path <- get_db_path()
   con <- dbConnect(RSQLite::SQLite(), dbname = db_path)
   
   # Safer behavior for concurrency + speed
   try(dbExecute(con, "PRAGMA journal_mode = WAL;"), silent = TRUE)
   try(dbExecute(con, "PRAGMA foreign_keys = ON;"), silent = TRUE)
+  try(dbExecute(con, "PRAGMA busy_timeout = 5000;"), silent = TRUE)
   
   con
 }
+
 
 db_get <- function(sql, params = NULL) {
   con <- NULL
