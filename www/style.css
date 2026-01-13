@@ -1,11 +1,53 @@
+/* =============================== ANIMATIONS =============================== */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes buttonPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(37, 99, 235, 0);
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    text-shadow: 0 0 5px rgba(37, 99, 235, 0.5);
+  }
+  50% {
+    text-shadow: 0 0 15px rgba(37, 99, 235, 0.8);
+  }
+}
+
 /* =============================== GLOBAL =============================== */
 html, body { height: 100%; }
 
 body {
-  background: #0f172a;
+  background: linear-gradient(135deg, #0f172a 0%, #1a1f3a 100%);
   color: #e5e7eb;
   font-family: "Segoe UI", sans-serif;
   margin: 0;
+  transition: all 0.3s ease;
 }
 
 /* Prevent Shiny from dimming the whole UI while busy */
@@ -20,30 +62,42 @@ body {
   padding:20px;
 }
 .login-card{
-  background:#020617;
+  background: linear-gradient(135deg, #020617 0%, #0f172a 100%);
   padding:40px;
   border-radius:16px;
   width:360px;
-  box-shadow:0 0 40px rgba(0,0,0,0.6);
-  animation: fadeUp 0.28s ease both;
+  box-shadow: 0 0 40px rgba(0,0,0,0.6), 0 0 80px rgba(37,99,235,0.1);
+  animation: fadeUp 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border: 1px solid rgba(37,99,235,0.15);
 }
 .login-title{
   text-align:center;
-  margin-bottom:20px;
+  margin-bottom:30px;
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #e5e7eb 0%, #cbd5f5 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.5px;
 }
 
 /* Make Shiny inputs look consistent */
 .form-control, .selectize-input {
   background: #0b1224 !important;
   color: #e5e7eb !important;
-  border: 1px solid rgba(148, 163, 184, 0.25) !important;
+  border: 2px solid rgba(148, 163, 184, 0.2) !important;
   border-radius: 10px !important;
+  transition: all 0.3s ease !important;
+  padding: 12px 14px !important;
+  font-size: 15px !important;
 }
 
 .form-control:focus, .selectize-input.focus {
   outline: none !important;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25) !important;
-  border-color: rgba(37, 99, 235, 0.55) !important;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2) !important;
+  border-color: rgba(37, 99, 235, 0.6) !important;
+  background: linear-gradient(135deg, rgba(11, 18, 36, 0.8), rgba(37, 99, 235, 0.05)) !important;
 }
 
 label { color: #cbd5f5 !important; font-weight: 600; }
@@ -144,30 +198,45 @@ label { color: #cbd5f5 !important; font-weight: 600; }
 
 /* =============================== SIDEBAR =============================== */
 .sidebar {
-  width: 200px;
-  background: #020617;
+  width: 240px;
+  background: linear-gradient(180deg, #020617 0%, #0f172a 100%);
   min-height: 100vh;
   padding: 15px;
-  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  border-right: 1px solid rgba(37, 99, 235, 0.15);
   overflow-y: auto;
+  animation: slideIn 0.5s ease;
+  box-shadow: 2px 0 15px rgba(0, 0, 0, 0.3);
 }
 
 .side-btn {
   width: 100%;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   background: transparent;
-  border: none;
+  border: 1px solid rgba(37, 99, 235, 0.1);
   color: #cbd5f5;
   text-align: left;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 10px;
-  transition: 0.15s ease;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
 }
 
-.side-btn.active, .side-btn:hover {
-  background: #2563eb;
+.side-btn:hover {
+  background: rgba(37, 99, 235, 0.15);
+  border-color: rgba(37, 99, 235, 0.3);
+  transform: translateX(4px);
+  color: #e5e7eb;
+}
+
+.side-btn.active {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
   color: #ffffff;
+  border-color: rgba(37, 99, 235, 0.8);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+  font-weight: 700;
 }
 
 /* =============================== CONTENT =============================== */
@@ -177,6 +246,44 @@ label { color: #cbd5f5 !important; font-weight: 600; }
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  animation: fadeUp 0.6s ease 0.1s both;
+}
+
+.content h2 {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #e5e7eb 0%, #cbd5f5 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.5px;
+}
+
+.content > p {
+  color: #a1a5b3;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+/* Scrollbar styling */
+.content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.content::-webkit-scrollbar-track {
+  background: rgba(37, 99, 235, 0.05);
+  border-radius: 10px;
+}
+
+.content::-webkit-scrollbar-thumb {
+  background: rgba(37, 99, 235, 0.3);
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.content::-webkit-scrollbar-thumb:hover {
+  background: rgba(37, 99, 235, 0.5);
 }
 
 /* =============================== STATS =============================== */
@@ -221,23 +328,34 @@ label { color: #cbd5f5 !important; font-weight: 600; }
 }
 
 .panel {
-  background: #020617;
-  padding: 20px;
+  background: linear-gradient(135deg, rgba(2,6,23,0.9) 0%, rgba(11,18,36,0.7) 100%);
+  padding: 24px;
   border-radius: 16px;
   margin-top: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.10);
-  animation: fadeUp 0.28s ease both;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+  animation: fadeUp 0.5s ease-out both;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.panel:hover {
+  border-color: rgba(37, 99, 235, 0.25);
+  box-shadow: 0 8px 30px rgba(37, 99, 235, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.1);
 }
 
 .panel h3 { 
   margin-top: 0; 
-  margin-bottom: 16px; 
-  font-size: 16px;
+  margin-bottom: 18px; 
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
 }
 
 .panel-bright {
-  background: linear-gradient(180deg, #111827, #020617);
-  box-shadow: 0 0 30px rgba(0,0,0,0.6);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(2, 6, 23, 0.9) 100%);
+  box-shadow: 0 8px 32px rgba(37, 99, 235, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+  border-color: rgba(37, 99, 235, 0.2);
 }
 
 /* Table styling improvements */
@@ -443,26 +561,45 @@ table.dataTable.no-footer {
   width: 100%;
   border-radius: 10px !important;
   border: none !important;
-  padding: 10px 12px !important;
-  font-weight: 800 !important;
-  transition: 0.15s ease;
+  padding: 12px 16px !important;
+  font-weight: 700 !important;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+  font-size: 15px !important;
+  letter-spacing: 0.3px !important;
+  box-shadow: 0 4px 15px rgba(37, 99, 235, 0.2) !important;
+  position: relative;
+  overflow: hidden;
 }
 
 /* Table action buttons - narrower and compact */
 button.btn-primary[data-edit],
 button.btn-primary[style*="padding:6px 10px"] {
   width: auto !important;
-  padding: 4px 8px !important;
-  font-size: 12px !important;
+  padding: 6px 12px !important;
+  font-size: 13px !important;
   min-width: 50px;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15) !important;
 }
 
-.btn-primary { background: #2563eb !important; color: white !important; }
-.btn-success { background: #16a34a !important; color: white !important; }
+.btn-primary { 
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important; 
+  color: white !important;
+}
+
+.btn-success { 
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important; 
+  color: white !important;
+}
 
 .btn-primary:hover, .btn-success:hover {
-  filter: brightness(1.05);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35) !important;
+  filter: brightness(1.1);
+}
+
+.btn-primary:active, .btn-success:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2) !important;
 }
 
 .btn-end {

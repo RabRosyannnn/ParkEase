@@ -176,6 +176,17 @@ ui <- fluidPage(
         }
       });
 
+      // ⌨️ Enter key to sign in from login form
+      $(document).on('keypress', 'input[type=text], input[type=password]', function(e) {
+        if (e.which === 13) {
+          var $loginBtn = $('#login_btn');
+          if ($loginBtn.length > 0) {
+            e.preventDefault();
+            $loginBtn.click();
+          }
+        }
+      });
+
       // Session persistence - store login when successful
       window.storeLoginSession = function() {
         localStorage.setItem('parkease_logged_in', 'true');
