@@ -768,18 +768,18 @@ server <- function(input, output, session){
           tags$button("🖨 Print Ticket", class="btn-success", onclick="printTicket();"),
           modalButton("Close")
         ),
-        div(id="ticket_area", class="ticket",
-            h3("🅿 ParkEase Ticket"),
+        div(id="ticket_area", class="ticket", style="background: #fff; color: #111827;",
+            h3("ParkEase Ticket"),
             hr(),
-            p(strong("Slot"), span(info$slot_no[1])),
-            p(strong("Vehicle"), span(info$vehicle_no[1])),
-            p(strong("Driver"), span(info$driver_name[1])),
-            p(strong("Time In"), span(as.character(info$start_time[1]))),
-            p(strong("Time Out"), span(as.character(time_out))),
-            p(strong("Hours"), span(hours)),
-            p(strong("Rate/hr"), span(paste0("₱", rate))),
+            p(strong("Slot:"), span(info$slot_no[1])),
+            p(strong("Vehicle:"), span(info$vehicle_no[1])),
+            p(strong("Driver:"), span(info$driver_name[1])),
+            p(strong("Time In:"), span(format(info$start_time[1], "%Y-%m-%d %H:%M:%S"))),
+            p(strong("Time Out:"), span(format(time_out, "%Y-%m-%d %H:%M:%S"))),
+            p(strong("Duration:"), span(paste0(hours, " hour(s)"))),
+            p(strong("Rate/hr:"), span(paste0("₱", formatC(rate, digits=2, format="f")))),
             hr(),
-            h3(paste0("₱", formatC(total, digits=2, format="f")))
+            h3(paste0("Total: ₱", formatC(total, digits=2, format="f")))
         )
       ))
       

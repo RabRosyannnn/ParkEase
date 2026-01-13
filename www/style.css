@@ -273,50 +273,168 @@ table.dataTable.no-footer { border-bottom: 1px solid rgba(148, 163, 184, 0.18) !
 }
 
 /* =====================================================
-   🖨 PRINT FIX — TICKET SHOULD BE 1 PAGE (NO PAGE 3 ISSUE)
+   🖨 PRINT FIX — TICKET CLEAN PDF (SINGLE PAGE)
    ===================================================== */
 @media print {
-  @page { size: auto; margin: 10mm; }
+  @page { size: auto; margin: 5mm; }
 
-  /* Remove EVERYTHING from layout */
-  body * { display: none !important; }
+  html {
+    background: #fff !important;
+  }
 
-  /* Show ONLY the ticket */
-  #ticket_area {
-    display: block !important;
-
-    position: fixed !important;
-    top: 10mm !important;
-    left: 50% !important;
-    transform: translateX(-50%) !important;
-
-    width: 80mm !important;
-    max-width: 80mm !important;
-
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
     background: #fff !important;
     color: #111827 !important;
+  }
 
-    padding: 12mm 10mm !important;
+  /* Hide everything except modal */
+  body > *:not(.modal):not(.modal-backdrop) {
+    display: none !important;
+  }
+
+  /* Hide backdrop */
+  .modal-backdrop {
+    display: none !important;
+  }
+
+  /* Modal structure */
+  .modal {
+    display: block !important;
+    position: static !important;
+    opacity: 1 !important;
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .modal.fade {
+    transition: none !important;
+  }
+
+  .modal.show {
+    opacity: 1 !important;
+  }
+
+  .modal-dialog {
+    display: block !important;
+    position: static !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: auto !important;
+  }
+
+  .modal-content {
+    display: block !important;
+    position: static !important;
+    background: #fff !important;
+    color: #111827 !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    opacity: 1 !important;
+  }
+
+  .modal-header {
+    display: none !important;
+  }
+
+  .modal-footer {
+    display: none !important;
+  }
+
+  /* Ticket visibility */
+  #ticket_area {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: static !important;
+    width: auto !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 20px !important;
+    background: #fff !important;
+    color: #111827 !important;
     border: 2px dashed #111827 !important;
     border-radius: 12px !important;
-
     box-shadow: none !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
   }
 
-  /* Bring back ticket contents */
+  /* All ticket contents visible */
   #ticket_area * {
-    display: revert !important;
+    display: block !important;
     visibility: visible !important;
+    opacity: 1 !important;
+    color: #111827 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* Headings */
+  #ticket_area h3 {
+    display: block !important;
+    margin: 8px 0 !important;
+    padding: 0 !important;
+    text-align: center !important;
+    font-weight: 700 !important;
+    font-size: 16px !important;
     color: #111827 !important;
   }
 
-  #ticket_area span { display: inline !important; }
+  /* Paragraphs */
+  #ticket_area p {
+    display: block !important;
+    margin: 6px 0 !important;
+    padding: 0 !important;
+    font-size: 13px !important;
+    color: #111827 !important;
+  }
 
-  /* Tight print spacing */
-  #ticket_area p { margin: 6px 0 !important; font-size: 12px !important; }
+  /* Inline elements */
+  #ticket_area strong,
+  #ticket_area span {
+    display: inline !important;
+    color: #111827 !important;
+  }
 
-  /* Ensure modal chrome never prints */
-  .modal, .modal-dialog, .modal-content, .modal-footer, button, .btn { display: none !important; }
+  /* Horizontal lines */
+  #ticket_area hr {
+    display: block !important;
+    margin: 12px 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    border-top: 1px dashed #6b7280 !important;
+    background: transparent !important;
+  }
+
+  /* Total amount highlight */
+  #ticket_area h3:last-of-type {
+    display: block !important;
+    background: #111827 !important;
+    color: #fff !important;
+    padding: 14px !important;
+    margin: 12px 0 0 0 !important;
+    border-radius: 8px !important;
+    text-align: center !important;
+    font-size: 20px !important;
+    letter-spacing: 1px !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* Hide buttons */
+  button, .btn, [onclick] {
+    display: none !important;
+  }
 }
