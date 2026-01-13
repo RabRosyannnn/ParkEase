@@ -100,6 +100,8 @@ ensure_tables <- function() {
   db_exec("CREATE INDEX IF NOT EXISTS idx_reservations_timeout ON reservations(time_out);")
 }
 
+# --------- SEED TEST DATA ----------
+
 # --------- TIME HELPERS ----------
 to_posix <- function(x) {
   if (inherits(x, "POSIXct")) return(x)
@@ -115,6 +117,12 @@ rate_for_type <- function(type) {
          "Disabled" = 0,
          30)
 }
+
+# ---------- PENALTY RATES ----------
+PENALTY_LONG_STAY <- 50    # ₱50 per hour for 4-12 hours
+PENALTY_OVERDUE <- 100     # ₱100 per hour for 12+ hours
+LONG_STAY_THRESHOLD <- 4   # Hours
+OVERDUE_THRESHOLD <- 12    # Hours
 
 # --------- DARK PLOT THEME (Analytics UI fix) ----------
 theme_dark_dashboard <- function() {
@@ -466,7 +474,24 @@ server <- function(input, output, session){
       "ORDER BY r.start_time DESC",
       sep="\n"
     )
-    tryCatch(db_get(sql), error = function(e) data.frame())
+    df <- tryCatch(db_get(sql), error = function(e) {
+      showNotification(paste("Error fetching active reservations:", conditionMessage(e)), type="error")
+      data.frame()
+    })
+    
+    # Calculate duration in hours and add status badge
+    if (nrow(df) > 0) {
+      tryCatch({
+        df$start_time_posix <- sapply(df$start_time, function(x) to_posix(x))
+        df$duration_hours <- as.numeric(difftime(Sys.time(), df$start_time_posix, units = "hours"))
+        df$status_badge <- ifelse(df$duration_hours >= OVERDUE_THRESHOLD, "Overdue",
+                                   ifelse(df$duration_hours >= LONG_STAY_THRESHOLD, "Long Stay", "Active"))
+        # Keep original start_time for reference
+      }, error = function(e) {
+        showNotification(paste("Error calculating duration:", conditionMessage(e)), type="error")
+      })
+    }
+    df
   })
   
   completed <- reactive({
@@ -542,11 +567,19 @@ server <- function(input, output, session){
     paste0(prefix, sprintf("%03d", next_num))
   }
   
-  # Observer to auto-update slot number when zone or type changes
+  # Observer to auto-update slot number when zone or type changes OR page loads
   observe({
     req(logged_in(), input$zone, input$type)
     new_slot_no <- generate_next_slot_no(input$zone, input$type)
     updateTextInput(session, "slot_no", value = new_slot_no)
+  })
+  
+  # Trigger slot number generation when Add Slot page loads
+  observeEvent(current_page(), {
+    if (current_page() == "add" && logged_in() && !is.null(input$zone) && !is.null(input$type)) {
+      new_slot_no <- generate_next_slot_no(input$zone, input$type)
+      updateTextInput(session, "slot_no", value = new_slot_no)
+    }
   })
   
   # ---------- STATS ----------
@@ -676,6 +709,14 @@ server <- function(input, output, session){
       updateSelectInput(session,"slot_sel",
                         choices=setNames(as.character(avail$slot_id), avail$slot_no),
                         selected=as.character(avail$slot_id[1]))
+    }
+  })
+  
+  # Trigger available slots update when Reserve Slot page loads
+  observeEvent(current_page(), {
+    if (current_page() == "reserve" && logged_in()) {
+      # Force refresh of available slots
+      invalidateLater(100)
     }
   })
   
@@ -882,7 +923,22 @@ server <- function(input, output, session){
     if (is.na(hours) || hours < 1) hours <- 1
     
     rate <- as.numeric(info$rate[1])
-    total <- hours * rate
+    base_fee <- hours * rate
+    
+    # Calculate penalty fees for exceeding hours
+    penalty_fee <- 0
+    penalty_label <- ""
+    if (hours >= OVERDUE_THRESHOLD) {
+      excess_hours <- hours - OVERDUE_THRESHOLD
+      penalty_fee <- excess_hours * PENALTY_OVERDUE
+      penalty_label <- paste0("Overdue Penalty (", excess_hours, " hrs @ ₱", PENALTY_OVERDUE, "/hr)")
+    } else if (hours >= LONG_STAY_THRESHOLD) {
+      excess_hours <- hours - LONG_STAY_THRESHOLD
+      penalty_fee <- excess_hours * PENALTY_LONG_STAY
+      penalty_label <- paste0("Long Stay Penalty (", excess_hours, " hrs @ ₱", PENALTY_LONG_STAY, "/hr)")
+    }
+    
+    total <- base_fee + penalty_fee
     
     tryCatch({
       db_exec(paste(
@@ -912,6 +968,9 @@ server <- function(input, output, session){
         time_out = format(time_out, "%Y-%m-%d %H:%M:%S"),
         hours = hours,
         rate = rate,
+        base_fee = base_fee,
+        penalty_fee = penalty_fee,
+        penalty_label = penalty_label,
         total = total,
         res_id = as.integer(input$end_reservation)
       )
@@ -932,6 +991,10 @@ server <- function(input, output, session){
             p(strong("Time Out:"), span(format(time_out, "%Y-%m-%d %H:%M:%S"))),
             p(strong("Duration:"), span(paste0(hours, " hour(s)"))),
             p(strong("Rate/hr:"), span(paste0("₱", formatC(rate, digits=2, format="f")))),
+            p(strong("Base Fee:"), span(paste0("₱", formatC(base_fee, digits=2, format="f")))),
+            if (penalty_fee > 0) {
+              p(strong(penalty_label), ":", span(paste0("₱", formatC(penalty_fee, digits=2, format="f"))), style="color: #dc2626; font-weight: bold;")
+            },
             hr(),
             h3(paste0("Total: ₱", formatC(total, digits=2, format="f")))
         )
@@ -951,6 +1014,20 @@ server <- function(input, output, session){
                        options=list(dom="t"), rownames=FALSE))
     }
     
+    # Create status badge HTML
+    df$Status <- sapply(df$status_badge, function(badge) {
+      if (badge == "Overdue") {
+        "<span class='badge-overdue'>⚠ Overdue</span>"
+      } else if (badge == "Long Stay") {
+        "<span class='badge-longstay'>⏱ Long Stay</span>"
+      } else {
+        "<span class='badge-active'>✓ Active</span>"
+      }
+    })
+    
+    # Format duration hours
+    df$duration_display <- paste0(formatC(df$duration_hours, digits=1, format="f"), " hrs")
+    
     df$Edit <- paste0(
       "<button class='btn-primary' style='padding:6px 10px; border-radius:8px;' data-edit='",
       df$reservation_id,"'>Edit</button>"
@@ -960,12 +1037,19 @@ server <- function(input, output, session){
     )
     
     datatable(
-      df[,c("slot_no","zone","type","vehicle_no","driver_name","Edit","End")],
+      df[,c("slot_no","zone","type","vehicle_no","driver_name","duration_display","Status","Edit","End")],
+      colnames=c("Slot", "Zone", "Type", "Vehicle", "Driver", "Duration", "Status", "Edit", "End"),
       escape=FALSE, selection="none",
       options=list(
         dom="t",
         rowCallback=JS(
           "function(row, data){
+             var badge = data[6];
+             if (badge.includes('Overdue')) {
+               $(row).css('background-color', 'rgba(220, 38, 38, 0.1)');
+             } else if (badge.includes('Long Stay')) {
+               $(row).css('background-color', 'rgba(249, 115, 22, 0.1)');
+             }
              $('button[data-end]', row).off('click').on('click', function(){
                Shiny.setInputValue('end_reservation', $(this).data('end'), {priority:'event'});
              });
@@ -1151,6 +1235,17 @@ server <- function(input, output, session){
       grid::grid.text("Rate/hr:", x = 0.05, y = y_pos, just = c("left", "center"), gp = grid::gpar(fontsize = 10, fontface = "bold"))
       grid::grid.text(paste0("₱", formatC(ticket$rate, digits = 2, format = "f")), x = 0.95, y = y_pos, just = c("right", "center"), gp = grid::gpar(fontsize = 10))
       y_pos <- y_pos - line_height
+      
+      grid::grid.text("Base Fee:", x = 0.05, y = y_pos, just = c("left", "center"), gp = grid::gpar(fontsize = 9, fontface = "bold"))
+      grid::grid.text(paste0("₱", formatC(ticket$base_fee, digits = 2, format = "f")), x = 0.95, y = y_pos, just = c("right", "center"), gp = grid::gpar(fontsize = 9))
+      y_pos <- y_pos - line_height * 0.9
+      
+      # Show penalty if applicable
+      if (ticket$penalty_fee > 0) {
+        grid::grid.text(ticket$penalty_label, x = 0.05, y = y_pos, just = c("left", "center"), gp = grid::gpar(fontsize = 8, fontface = "bold", col = "#dc2626"))
+        grid::grid.text(paste0("₱", formatC(ticket$penalty_fee, digits = 2, format = "f")), x = 0.95, y = y_pos, just = c("right", "center"), gp = grid::gpar(fontsize = 8, fontface = "bold", col = "#dc2626"))
+        y_pos <- y_pos - line_height * 0.9
+      }
       
       # Line separator
       grid::grid.lines(c(0.05, 0.95), c(y_pos + 0.02, y_pos + 0.02), gp = grid::gpar(lty = "dashed", col = "black"))

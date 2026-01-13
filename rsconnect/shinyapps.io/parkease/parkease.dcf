@@ -5,6 +5,8 @@ account: parkease
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 16379759
-bundleId: 11408241
+bundleId: 11439076
 url: https://parkease.shinyapps.io/parkease/
 version: 1
+asMultiple: FALSE
+asStatic: FALSE

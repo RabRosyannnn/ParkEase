@@ -732,3 +732,37 @@ table.dataTable.no-footer { border-bottom: 1px solid rgba(148, 163, 184, 0.18) !
     display: none !important;
   }
 }
+
+/* ---------- STATUS BADGES ---------- */
+.badge-overdue {
+  display: inline-block;
+  background: #dc2626;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(220, 38, 38, 0.4);
+}
+
+.badge-longstay {
+  display: inline-block;
+  background: #f97316;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(249, 115, 22, 0.4);
+}
+
+.badge-active {
+  display: inline-block;
+  background: #16a34a;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 0 6px rgba(22, 163, 74, 0.3);
+}
